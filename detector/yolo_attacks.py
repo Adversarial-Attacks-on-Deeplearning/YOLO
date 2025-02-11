@@ -54,19 +54,15 @@ def reverse_prepare_image(im_batches, im_dim_list, save_dir, inp_dim):
 
 
 
-
 def dag_attack(
-model, 
-images, 
-target_objects,  # List of target classes to attack
-adversarial_classes,  # List of corresponding adversarial classes
-max_iter=10, 
-gamma=0.1, 
-CUDA=True
+    model, 
+    images, 
+    target_objects, 
+    adversarial_classes, 
+    max_iter=20, 
+    gamma=0.1, 
+    CUDA=True
 ):
-    """
-    Perform the Decision-based Adversarial Generation (DAG) attack on the given images.
-    """
     im_batches, im_dim_list, imlist, loaded_ims = prepare_image(images, model.net_info["height"])
     adversarial_images = []
     perturbations = []
@@ -77,6 +73,7 @@ CUDA=True
         
         original_batch = batch.clone().detach()
         perturbation = torch.zeros_like(original_batch, requires_grad=True)
+        attack_successful = False
         
         for m in range(max_iter):
             model.zero_grad()
@@ -88,30 +85,47 @@ CUDA=True
             
             filtered_preds = write_results(prediction, confidence=0.0, num_classes=80, nms_conf=0.4)
             
-            if isinstance(filtered_preds, int):
+            # Early stopping if no targets left
+            remaining_targets = 0
+            if not isinstance(filtered_preds, int):
+                remaining_targets = sum(1 for det in filtered_preds if int(det[-1].item()) in target_objects)
+            
+            if remaining_targets == 0:
+                print(f"Iteration {m+1}: Attack succeeded. Stopping early.")
+                attack_successful = True
                 break
             
-            loss = 0
+            # Initialize loss as a tensor
+            loss = torch.tensor(0.0, device=adv_batch.device, requires_grad=True)
+            
+            # Compute loss only if there are detections
+            if isinstance(filtered_preds, int):
+                continue  # Skip if no detections
+            
             for det in filtered_preds:
                 class_id = int(det[-1].item())
                 if class_id in target_objects:
-                    idx = target_objects.index(class_id)  # Find corresponding adversarial class
+                    idx = target_objects.index(class_id)
                     adv_class = adversarial_classes[idx]
                     
-                    loss += prediction[..., 5 + adv_class].sum()
-                    loss -= prediction[..., 5 + class_id].sum()
+                    # Avoid in-place operations
+                    loss = loss + prediction[..., 5 + adv_class].sum()  # Adversarial class
+                    loss = loss - prediction[..., 5 + class_id].sum()   # Original class
             
-            loss.backward(retain_graph=True)
-            print(f"Step {m+1}/{max_iter}: Loss = {loss.item()}")
-            
-            grad = perturbation.grad.data
-            grad_norm = torch.norm(grad, p=float('inf'))
-            perturbation_step = (gamma / grad_norm) * grad
-            
-            perturbation.data += perturbation_step
-            perturbation.grad.zero_()
+            # Backpropagate only if loss has gradients
+            if loss.grad_fn is not None:
+                loss.backward(retain_graph=True)
+                print(f"Step {m+1}/{max_iter}: Loss = {loss.item()}")
+                
+                grad = perturbation.grad.data
+                grad_norm = torch.norm(grad, p=float('inf'))
+                perturbation_step = (gamma / grad_norm) * grad
+                perturbation.data += perturbation_step
+                perturbation.grad.zero_()
+            else:
+                continue
         
         adversarial_images.append(adv_batch.detach())
         perturbations.append(perturbation.detach())
     
-    return adversarial_images, perturbations , im_dim_list
+    return adversarial_images, perturbations, im_dim_list
