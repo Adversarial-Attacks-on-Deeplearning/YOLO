@@ -13,6 +13,8 @@ import pickle as pkl
 import pandas as pd
 import random
 
+
+
 def arg_parse():
     """
     Parse arguements to the detect module
@@ -72,43 +74,8 @@ def load_yolo_model(cfgfile,weightsfile, reso ,CUDA = True):
     return model, classes, num_classes, inp_dim
 
 
-def prepare_image(images, inp_dim, batch_size = 1):
-    """
-    Prepare image for inputting to the neural network. 
-    
-    Returns a Variable 
-    """
-    try:
-        imlist = [osp.join(osp.realpath('.'), images, img) for img in os.listdir(images)]
-    except NotADirectoryError:
-        imlist = []
-        imlist.append(osp.join(osp.realpath('.'), images))
-    except FileNotFoundError:
-        print ("No file or directory with the name {}".format(images))
-        exit()
-        
 
-
-    loaded_ims = [cv2.imread(x) for x in imlist]
-
-    im_batches = list(map(prep_image, loaded_ims, [inp_dim for x in range(len(imlist))]))
-    im_dim_list = [(x.shape[1], x.shape[0]) for x in loaded_ims]
-    im_dim_list = torch.FloatTensor(im_dim_list).repeat(1,2)
-
-
-    leftover = 0
-    if (len(im_dim_list) % batch_size):
-        leftover = 1
-
-    if batch_size != 1:
-        num_batches = len(imlist) // batch_size + leftover            
-        im_batches = [torch.cat((im_batches[i*batch_size : min((i +  1)*batch_size,
-                            len(im_batches))]))  for i in range(num_batches)] 
-    
-    return im_batches, im_dim_list, imlist, loaded_ims
-
-
-def detect_image(model, classes, num_classes, inp_dim, images, batch_size, confidence, nms_thesh,det, CUDA = True):
+def detect_image(model, classes, num_classes, inp_dim, im_batches, im_dim_list, imlist, loaded_ims, batch_size, confidence, nms_thesh, CUDA = True):
     """
     Perform detection on images
     return output, imlist, loaded_ims
@@ -126,16 +93,11 @@ def detect_image(model, classes, num_classes, inp_dim, images, batch_size, confi
 
     """
     
-    #Detection phase
-    #load the images
-    im_batches, im_dim_list, imlist, loaded_ims = prepare_image(images, inp_dim, batch_size)
 
-    #make the detection directory if it doesn't exist
-    if not os.path.exists(det):
-        os.makedirs(det)
+
 
     write = 0
-
+    output = None
 
     if CUDA:
         im_dim_list = im_dim_list.cuda()
@@ -179,12 +141,11 @@ def detect_image(model, classes, num_classes, inp_dim, images, batch_size, confi
 
         if CUDA:
             torch.cuda.synchronize()       
-    try:
-        output
-    except NameError:
-        print ("No detections were made")
-        exit()
+    if output is None:
+        print("No detections were made")
+        return output, imlist, loaded_ims
 
+    
     im_dim_list = torch.index_select(im_dim_list, 0, output[:,0].long())
 
     scaling_factor = torch.min(416/im_dim_list,1)[0].view(-1,1)
@@ -229,6 +190,13 @@ def write(x, results ,colors, classes):
     return img
 
 def draw_boxes(loaded_ims,output,imlist,classes, det):
+    if output is None:
+        print("No detections were made")
+        return
+    #make the detection directory if it doesn't exist
+    if not os.path.exists(det):
+        os.makedirs(det)
+
     colors = pkl.load(open("pallete", "rb"))
     list(map(lambda x: write(x, loaded_ims,colors,classes), output))
     det_names = pd.Series(imlist).apply(lambda x: "{}/det_{}".format(det,x.split("/")[-1]))
@@ -248,5 +216,4 @@ if __name__ == "__main__":
     model, classes, num_classes, inp_dim = load_yolo_model(args.cfgfile,args.weightsfile, args.reso ,CUDA = CUDA)
     output, imlist, loaded_ims = detect_image(model, classes, num_classes, inp_dim, images, batch_size, confidence, nms_thesh,args.det, CUDA = CUDA)
     draw_boxes(loaded_ims,output,imlist,classes, args.det)
-
 

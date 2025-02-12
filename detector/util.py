@@ -6,7 +6,63 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 import cv2 
+import os
+import os.path as osp
+from torchvision.utils import save_image
 
+def prepare_image(images, inp_dim, batch_size = 1):
+    """
+    Prepare image for inputting to the neural network. 
+    
+    Returns a Variable 
+    """
+    try:
+        imlist = [osp.join(osp.realpath('.'), images, img) for img in os.listdir(images)]
+    except NotADirectoryError:
+        imlist = []
+        imlist.append(osp.join(osp.realpath('.'), images))
+    except FileNotFoundError:
+        print ("No file or directory with the name {}".format(images))
+        exit()
+        
+
+
+    loaded_ims = [cv2.imread(x) for x in imlist]
+
+    im_batches = list(map(prep_image, loaded_ims, [inp_dim for x in range(len(imlist))]))
+    im_dim_list = [(x.shape[1], x.shape[0]) for x in loaded_ims]
+    im_dim_list = torch.FloatTensor(im_dim_list).repeat(1,2)
+
+
+    leftover = 0
+    if (len(im_dim_list) % batch_size):
+        leftover = 1
+
+    if batch_size != 1:
+        num_batches = len(imlist) // batch_size + leftover            
+        im_batches = [torch.cat((im_batches[i*batch_size : min((i +  1)*batch_size,
+                            len(im_batches))]))  for i in range(num_batches)] 
+    
+    return im_batches, im_dim_list, imlist, loaded_ims
+
+
+
+def get_detection_summary(output):
+    """
+    Args:
+        output: Tensor returned by detect_image (shape [N, 8]).
+
+    Returns:
+        detected_objects: List of **unique** detected class IDs (e.g., [2, 0] for "car" and "person").
+    """
+    detected_ids = []
+    if isinstance(output, torch.Tensor):
+        for detection in output:
+            class_id = int(detection[7].item())  # Class ID at index 7
+            detected_ids.append(class_id)
+    
+    # Remove duplicates and return
+    return list(set(detected_ids))
 
 def unique(tensor):
     return torch.unique(tensor)  # Use PyTorch's built-in function to keep gradients
