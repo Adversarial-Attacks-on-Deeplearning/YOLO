@@ -31,7 +31,7 @@ def prepare_image(images, inp_dim, batch_size = 1):
 
     im_batches = list(map(prep_image, loaded_ims, [inp_dim for x in range(len(imlist))]))
     im_dim_list = [(x.shape[1], x.shape[0]) for x in loaded_ims]
-    im_dim_list = torch.FloatTensor(im_dim_list).repeat(1,2)
+    im_dim_list = torch.FloatTensor(im_dim_list)
 
 
     leftover = 0
@@ -250,16 +250,26 @@ def letterbox_image(img, inp_dim):
     
     return canvas
 
+def resize_image(img, inp_dim):
+    """
+    Resize image to the specified dimensions without maintaining aspect ratio.
+    - img: Input image (numpy array, HxWxC).
+    - inp_dim: Target dimensions (width, height).
+    """
+    # Resize the image to the target dimensions
+    resized_image = cv2.resize(img, inp_dim, interpolation=cv2.INTER_CUBIC)
+    return resized_image
+
 def prep_image(img, inp_dim):
     """
     Prepare image for inputting to the neural network. 
-    
-    Returns a Variable 
     """
-    img = (letterbox_image(img, (inp_dim, inp_dim)))
-    img = img[:,:,::-1].transpose((2,0,1)).copy()
+    # Use your new resize function
+    img = resize_image(img, (inp_dim, inp_dim))  # Resize without padding
+    img = img[:,:,::-1].transpose((2,0,1)).copy()  # BGR → RGB | HWC → CHW
     img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
     return img
+
 
 def load_classes(namesfile):
     fp = open(namesfile, "r")

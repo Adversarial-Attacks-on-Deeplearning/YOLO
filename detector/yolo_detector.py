@@ -75,93 +75,71 @@ def load_yolo_model(cfgfile,weightsfile, reso ,CUDA = True):
 
 
 
-def detect_image(model, classes, num_classes, inp_dim, im_batches, im_dim_list, imlist, loaded_ims, batch_size, confidence, nms_thesh, CUDA = True):
+def detect_image(model, classes, num_classes, inp_dim, im_batches, im_dim_list, imlist, loaded_ims, batch_size, confidence, nms_thesh, CUDA=True):
     """
-    Perform detection on images
-    return output, imlist, loaded_ims
-    output: is a tensor of shape (N, 7) where N is the number of detections
-    ind 0: the index of the image in the batch
-    ind 1: x coordinate of the top left corner of the predicted bounding box
-    ind 2: y coordinate of the top left corner of the predicted bounding box
-    ind 3: x coordinate of the bottom right corner of the predicted bounding box
-    ind 4: y coordinate of the bottom right corner of the predicted bounding box
-    ind 5: objectness score of the prediction
-    ind 6: confidence of the prediction
-    ind 7: the index of the class detected
-    imlist: list of image paths
-    loaded_ims: list of loaded images
-
+    Perform detection on images (with aspect ratio distortion support)
     """
-    
-
-
-
     write = 0
     output = None
 
     if CUDA:
         im_dim_list = im_dim_list.cuda()
-        
 
     for i, batch in enumerate(im_batches):
-    #load the image 
-
         if CUDA:
             batch = batch.cuda()
 
-        batch.requires_grad = True  
-
-        with torch.enable_grad():  
+        with torch.no_grad():  # Disable gradient calculation
             prediction = model(batch, CUDA)
         
-        prediction = write_results(prediction, confidence, num_classes, nms_conf = nms_thesh)
+        prediction = write_results(prediction, confidence, num_classes, nms_conf=nms_thesh)
 
-
-
-        if type(prediction) == int:
-
-            for im_num, image in enumerate(imlist[i*batch_size: min((i +  1)*batch_size, len(imlist))]):
+        if isinstance(prediction, int):  # No detections
+            for im_num, image in enumerate(imlist[i*batch_size: min((i+1)*batch_size, len(imlist))]):
                 im_id = i*batch_size + im_num
+                print(f"Image {im_id}: No detections")
             continue
 
-        prediction[:,0] += i*batch_size    #transform the atribute from index in batch to index in imlist 
+        # Map detection indices to original image order
+        prediction[:, 0] += i * batch_size
 
-        if not write:                      #If we have't initialised output
-            output = prediction  
-            write = 1
-        else:
-            output = torch.cat((output,prediction))
+        # Aggregate predictions
+        output = prediction if not write else torch.cat((output, prediction))
+        write = 1
 
-        for im_num, image in enumerate(imlist[i*batch_size: min((i +  1)*batch_size, len(imlist))]):
+        # Print detected objects
+        for im_num, image in enumerate(imlist[i*batch_size: min((i+1)*batch_size, len(imlist))]):
             im_id = i*batch_size + im_num
             objs = [classes[int(x[-1])] for x in output if int(x[0]) == im_id]
-            print("----------------------------------------------------------")
-            print("{0:20s} {1:s}".format("Objects Detected:", " ".join(objs)))
-            print("----------------------------------------------------------")
+            print("-"*58)
+            print(f"{'Objects Detected:':20s} {' '.join(objs)}")
+            print("-"*58)
 
-        if CUDA:
-            torch.cuda.synchronize()       
     if output is None:
         print("No detections were made")
         return output, imlist, loaded_ims
 
-    
-    im_dim_list = torch.index_select(im_dim_list, 0, output[:,0].long())
+    # ========== Critical Scaling Section ========== #
+    # Get original dimensions for each detection
+    im_dim_list = torch.index_select(im_dim_list, 0, output[:, 0].long())
 
-    scaling_factor = torch.min(416/im_dim_list,1)[0].view(-1,1)
+    # Calculate independent scaling factors
+    width_scale = (im_dim_list[:, 0] / inp_dim).view(-1, 1)  # original_w / resized_w
+    height_scale = (im_dim_list[:, 1] / inp_dim).view(-1, 1)  # original_h / resized_h
 
+    # Scale bounding box coordinates
+    output[:, [1, 3]] *= width_scale   # x1, x2
+    output[:, [2, 4]] *= height_scale  # y1, y2
 
-    output[:,[1,3]] -= (inp_dim - scaling_factor*im_dim_list[:,0].view(-1,1))/2
-    output[:,[2,4]] -= (inp_dim - scaling_factor*im_dim_list[:,1].view(-1,1))/2
+    # Clamp coordinates to image boundaries
+    min_val = torch.tensor(0.0, device=output.device)  # Tensor for min (0.0)
+    max_width = im_dim_list[:, 0].view(-1, 1)
+    max_height = im_dim_list[:, 1].view(-1, 1)
 
+    output[:, [1, 3]] = torch.clamp(output[:, [1, 3]], min=min_val, max=max_width)
+    output[:, [2, 4]] = torch.clamp(output[:, [2, 4]], min=min_val, max=max_height)
+    # ============================================== #
 
-
-    output[:,1:5] /= scaling_factor
-
-    for i in range(output.shape[0]):
-        output[i, [1,3]] = torch.clamp(output[i, [1,3]], 0.0, im_dim_list[i,0])
-        output[i, [2,4]] = torch.clamp(output[i, [2,4]], 0.0, im_dim_list[i,1])
-    
     return output, imlist, loaded_ims
 
 
@@ -213,7 +191,16 @@ if __name__ == "__main__":
     start = 0
     CUDA = torch.cuda.is_available()
 
-    model, classes, num_classes, inp_dim = load_yolo_model(args.cfgfile,args.weightsfile, args.reso ,CUDA = CUDA)
-    output, imlist, loaded_ims = detect_image(model, classes, num_classes, inp_dim, images, batch_size, confidence, nms_thesh,args.det, CUDA = CUDA)
-    draw_boxes(loaded_ims,output,imlist,classes, args.det)
-
+    model, classes, num_classes, inp_dim = load_yolo_model(args.cfgfile, args.weightsfile, args.reso, CUDA=CUDA)
+    
+    # Prepare images: ADD THIS STEP
+    im_batches, im_dim_list, imlist, loaded_ims = prepare_image(images, inp_dim, batch_size)
+    
+    # Correctly pass parameters to detect_image
+    output, imlist, loaded_ims = detect_image(
+        model, classes, num_classes, inp_dim,
+        im_batches, im_dim_list, imlist, loaded_ims,
+        batch_size, confidence, nms_thesh, CUDA=CUDA
+    )
+    
+    draw_boxes(loaded_ims, output, imlist, classes, args.det)
