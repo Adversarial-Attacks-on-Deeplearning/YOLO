@@ -167,19 +167,28 @@ def write(x, results ,colors, classes):
 
     return img
 
-def draw_boxes(loaded_ims,output,imlist,classes, det):
+def draw_boxes(loaded_ims, output, imlist, classes, det, im_name_prefix=""):
     if output is None:
         print("No detections were made")
         return
-    #make the detection directory if it doesn't exist
+    
+    # Create detection directory if it doesn't exist
     if not os.path.exists(det):
         os.makedirs(det)
 
     colors = pkl.load(open("pallete", "rb"))
-    list(map(lambda x: write(x, loaded_ims,colors,classes), output))
-    det_names = pd.Series(imlist).apply(lambda x: "{}/det_{}".format(det,x.split("/")[-1]))
+    
+    # Draw bounding boxes on images
+    list(map(lambda x: write(x, loaded_ims, colors, classes), output))
+    
+    # Generate new filenames with im_name prefix
+    det_names = pd.Series(imlist).apply(
+        lambda x: os.path.join(det, f"{im_name_prefix}_{os.path.basename(x)}")
+    )
+    
+    # Save images with new names
     list(map(cv2.imwrite, det_names, loaded_ims))
-    print("Detection Images are saved in {}".format(det))
+    print(f"Detection images saved in {det} with prefix: {im_name_prefix}_")
 
     
 if __name__ == "__main__":
