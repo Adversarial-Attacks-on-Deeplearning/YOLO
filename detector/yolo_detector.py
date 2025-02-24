@@ -45,14 +45,10 @@ def arg_parse():
     return parser.parse_args()
 
 
-def load_yolo_model(cfgfile,weightsfile, reso ,CUDA = True):
-    num_classes = 80
-    classes = load_classes("data/coco.names")
-
-
+def load_yolo_model(cfgfile,weightsfile,classes_file, reso ,CUDA = True):
 
     num_classes = 80
-    classes = load_classes("data/coco.names")
+    classes = load_classes(classes_file)
     #Set up the neural network
     print("Loading network.....")
     model = Darknet(cfgfile)

@@ -275,3 +275,35 @@ def load_classes(namesfile):
     fp = open(namesfile, "r")
     names = fp.read().split("\n")[:-1]
     return names
+
+
+import os
+from torch.utils.data import Dataset, DataLoader
+
+class YOLODataset(Dataset):
+    def __init__(self, img_dir, label_dir, img_size=512):
+        self.img_dir = img_dir
+        self.label_dir = label_dir
+        self.img_files = os.listdir(img_dir)
+        self.img_size = img_size
+
+    def __len__(self):
+        return len(self.img_files)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_dir, self.img_files[idx])
+        label_path = os.path.join(self.label_dir, self.img_files[idx].replace(".jpg", ".txt"))
+        
+        # Load image and resize
+        img = cv2.imread(img_path)
+        img = cv2.resize(img, (self.img_size, self.img_size))
+        img = img.transpose(2,0,1) / 255.0  # HWC → CHW, normalize
+        
+        # Load labels: [class, x_center, y_center, width, height] (YOLO format)
+        labels = []
+        with open(label_path, 'r') as f:
+            for line in f:
+                class_id, x, y, w, h = map(float, line.split())
+                labels.append([class_id, x, y, w, h])
+        
+        return torch.tensor(img, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
