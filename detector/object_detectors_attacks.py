@@ -6,6 +6,7 @@ from yolo_detector import prepare_image
 import os
 import torch
 from torchvision.utils import save_image
+from torchvision.transforms.functional import resize
 
 def targeted_dag_attack(
     model, 
@@ -19,7 +20,7 @@ def targeted_dag_attack(
     CUDA=True
 ):
     # Prepare images
-    im_batches, _, _, _ = prepare_image(images, model.net_info["height"])
+    im_batches, im_dim_list, _, _ = prepare_image(images, model.net_info["height"])
     adversarial_images = []
     perturbations = []
 

@@ -115,26 +115,7 @@ def detect_image(model, classes, num_classes, inp_dim, im_batches, im_dim_list, 
         print("No detections were made")
         return output, imlist, loaded_ims
 
-    # ========== Critical Scaling Section ========== #
-    # Get original dimensions for each detection
-    im_dim_list = torch.index_select(im_dim_list, 0, output[:, 0].long())
-
-    # Calculate independent scaling factors
-    width_scale = (im_dim_list[:, 0] / inp_dim).view(-1, 1)  # original_w / resized_w
-    height_scale = (im_dim_list[:, 1] / inp_dim).view(-1, 1)  # original_h / resized_h
-
-    # Scale bounding box coordinates
-    output[:, [1, 3]] *= width_scale   # x1, x2
-    output[:, [2, 4]] *= height_scale  # y1, y2
-
-    # Clamp coordinates to image boundaries
-    min_val = torch.tensor(0.0, device=output.device)  # Tensor for min (0.0)
-    max_width = im_dim_list[:, 0].view(-1, 1)
-    max_height = im_dim_list[:, 1].view(-1, 1)
-
-    output[:, [1, 3]] = torch.clamp(output[:, [1, 3]], min=min_val, max=max_width)
-    output[:, [2, 4]] = torch.clamp(output[:, [2, 4]], min=min_val, max=max_height)
-    # ============================================== #
+    # ========== Critical Scaling Section REMOVED ========== #
 
     return output, imlist, loaded_ims
 
@@ -163,7 +144,11 @@ def write(x, results ,colors, classes):
 
     return img
 
-def draw_boxes(loaded_ims, output, imlist, classes, det, im_name_prefix=""):
+def draw_boxes(loaded_ims, inp_dim, output, imlist, classes, det, im_name_prefix=""):
+
+    im_batches = [resize_image(img, (inp_dim, inp_dim)) for img in loaded_ims]
+
+
     if output is None:
         print("No detections were made")
         return
@@ -175,7 +160,7 @@ def draw_boxes(loaded_ims, output, imlist, classes, det, im_name_prefix=""):
     colors = pkl.load(open("pallete", "rb"))
     
     # Draw bounding boxes on images
-    list(map(lambda x: write(x, loaded_ims, colors, classes), output))
+    list(map(lambda x: write(x, im_batches, colors, classes), output))
     
     # Generate new filenames with im_name prefix
     det_names = pd.Series(imlist).apply(
@@ -183,7 +168,7 @@ def draw_boxes(loaded_ims, output, imlist, classes, det, im_name_prefix=""):
     )
     
     # Save images with new names
-    list(map(cv2.imwrite, det_names, loaded_ims))
+    list(map(cv2.imwrite, det_names, im_batches))
     print(f"Detection images saved in {det} with prefix: {im_name_prefix}_")
 
     

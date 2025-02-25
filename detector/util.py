@@ -264,7 +264,7 @@ def prep_image(img, inp_dim):
     """
     Prepare image for inputting to the neural network. 
     """
-    # Use your new resize function
+    
     img = resize_image(img, (inp_dim, inp_dim))  # Resize without padding
     img = img[:,:,::-1].transpose((2,0,1)).copy()  # BGR → RGB | HWC → CHW
     img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
