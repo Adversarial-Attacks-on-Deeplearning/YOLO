@@ -104,3 +104,111 @@ def preprocess_image(image_path):
     return img_tensor
 
 
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+
+import cv2
+import os
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+def find_predicted_image(pred_folder, original_filename):
+    """Finds the predicted image file inside the YOLO output folder."""
+    all_files = os.listdir(pred_folder)
+    
+    # Try exact match first
+    if original_filename in all_files:
+        return os.path.join(pred_folder, original_filename)
+    
+    # If not found, find the closest match
+    for filename in all_files:
+        if filename.startswith(original_filename.split('.')[0]):  # Match without extension
+            return os.path.join(pred_folder, filename)
+    
+    return None  # No match found
+
+def compare_original_and_adversarial(model, image_path, adversarial_image, conf_threshold):
+    """
+    Compares the original and adversarial images by displaying them side by side
+    and also showing the model’s predictions on both.
+    """
+
+    # Preprocess the original image
+    image = preprocess_image(image_path)
+
+    # Run and save predictions with unique save directories
+    original_save_dir = "runs/detect/original_pred"
+    adversarial_save_dir = "runs/detect/adversarial_pred"
+
+    print("original_pred: ", end="")
+    model(image_path, conf=conf_threshold, save=True, project="runs/detect", name="original_pred", exist_ok=True)
+
+    print("adversarial_pred: ", end="")
+    adv_image_path = 'adversarial_image.png'
+
+    # Ensure proper conversion before saving
+    adversarial_image = adversarial_image.clone().detach()
+    bgr_image = cv2.cvtColor(
+        (adversarial_image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8), 
+        cv2.COLOR_RGB2BGR
+    )
+    cv2.imwrite(adv_image_path, bgr_image)
+
+    model(adv_image_path, conf=conf_threshold, save=True, project="runs/detect", name="adversarial_pred", exist_ok=True)
+
+    # Locate saved prediction images (use dynamic filename search)
+    original_pred_path = find_predicted_image(original_save_dir, os.path.basename(image_path))
+    adversarial_pred_path = find_predicted_image(adversarial_save_dir, os.path.basename(adv_image_path))
+
+    print(f"Original prediction found: {original_pred_path}")
+    print(f"Adversarial prediction found: {adversarial_pred_path}")
+
+    if not (original_pred_path and adversarial_pred_path):
+        print("Predicted images not found.")
+        return
+
+    # Load prediction images
+    original_pred_np = cv2.imread(original_pred_path)
+    adversarial_pred_np = cv2.imread(adversarial_pred_path)
+
+    # Convert BGR to RGB for proper display
+    original_pred_np = cv2.cvtColor(original_pred_np, cv2.COLOR_BGR2RGB)
+    adversarial_pred_np = cv2.cvtColor(adversarial_pred_np, cv2.COLOR_BGR2RGB)
+
+    # Convert tensors to displayable format
+    adversarial_image_np = (adversarial_image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    original_image_np = (image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+    # Display Original vs Adversarial Image (Raw)
+    plt.figure(figsize=(10, 5))
+
+    plt.subplot(1, 2, 1)
+    plt.imshow(original_image_np)
+    plt.axis('off')
+    plt.title("Original Image")
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(adversarial_image_np)
+    plt.axis('off')
+    plt.title("Adversarial Image")
+
+    plt.show()
+
+    # Display Original Prediction vs Adversarial Prediction
+    plt.figure(figsize=(10, 5))
+
+    plt.subplot(1, 2, 1)
+    plt.imshow(original_pred_np)
+    plt.axis('off')
+    plt.title("Original Prediction")
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(adversarial_pred_np)
+    plt.axis('off')
+    plt.title("Adversarial Prediction")
+
+    plt.show()
