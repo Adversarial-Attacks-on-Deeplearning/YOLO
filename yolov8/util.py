@@ -11,6 +11,10 @@ import os.path as osp
 import pickle as pkl
 import pandas as pd
 import random
+import matplotlib.pyplot as plt
+import tifffile
+from PIL import Image
+
 
 
 def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
@@ -75,10 +79,6 @@ def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scale
     
     return img, r, (dw, dh)
 
-
-
-
-import torch
 def preprocess_image(image_path):
     # Load the image using OpenCV
     img_bgr = cv2.imread(image_path)
@@ -103,19 +103,6 @@ def preprocess_image(image_path):
     
     return img_tensor
 
-
-import cv2
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-
-
-import cv2
-import os
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-
 def find_predicted_image(pred_folder, original_filename):
     """Finds the predicted image file inside the YOLO output folder."""
     all_files = os.listdir(pred_folder)
@@ -131,84 +118,95 @@ def find_predicted_image(pred_folder, original_filename):
     
     return None  # No match found
 
+
+
+def save_tensor_image_tiff(tensor, save_path):
+    """
+    Saves a tensor as a float32 TIFF image.
+    This preserves the exact floating point values (assuming tensor values are in [0,1]).
+    """
+    # Remove batch dimension and convert from (C, H, W) to (H, W, C)
+    tensor_np = tensor.squeeze().permute(1, 2, 0).cpu().numpy().astype(np.float32)
+    # Save as TIFF with float32 data
+    tifffile.imwrite(save_path, tensor_np)
+
+def load_tiff_image_as_tensor(save_path):
+    """
+    Loads a TIFF image saved in float32 format and converts it to a torch tensor.
+    """
+    # Read the TIFF file with tifffile to preserve float precision
+    image_np = tifffile.imread(save_path)
+    # If the model expects a tensor in shape (1, C, H, W) with values in [0,1]
+    tensor = torch.from_numpy(image_np).permute(2, 0, 1).unsqueeze(0)
+    return tensor
+
 def compare_original_and_adversarial(model, image_path, adversarial_image, conf_threshold):
     """
-    Compares the original and adversarial images by displaying them side by side
-    and also showing the model’s predictions on both.
+    Compares the original and adversarial images by saving the adversarial tensor to disk
+    using a lossless (float32) TIFF and then running predictions on both the original image
+    and the saved adversarial image. This approach aims to maintain the subtle adversarial
+    perturbations that might be lost during uint8 conversion.
     """
+    # Preprocess the original image (this function should return a tensor in the expected format)
+    original_tensor = preprocess_image(image_path)
+    
+    # Run prediction on the original tensor
+    print("Running prediction on original tensor...")
+    original_results = model(original_tensor, conf=conf_threshold)
+    
+    # Save the adversarial image as a TIFF (preserving float32 precision)
+    adv_image_path = "adversarial_image.tiff"
+    adversarial_tensor = adversarial_image.clone().detach()  # ensure no gradient is attached
+    save_tensor_image_tiff(adversarial_tensor, adv_image_path)
+    
+    # Now load the saved TIFF as a tensor to run prediction
+    loaded_adv_tensor = load_tiff_image_as_tensor(adv_image_path)
+    
+    print("Running prediction on loaded adversarial tensor...")
+    adversarial_results = model(loaded_adv_tensor, conf=conf_threshold)
+    
+    # For display purposes, convert tensors to numpy arrays (scaling back to 0-255 for visualization)
+    original_np = (original_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    adversarial_np = (adversarial_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    
+    # Render prediction outputs if the results object supports a plotting method (e.g., .plot())
+    try:
+        original_pred_img = original_results[0].plot()  # assuming results[0] has a plot() method
+    except Exception as e:
+        print("Error rendering original predictions:", e)
+        original_pred_img = None
 
-    # Preprocess the original image
-    image = preprocess_image(image_path)
+    try:
+        adversarial_pred_img = adversarial_results[0].plot()
+    except Exception as e:
+        print("Error rendering adversarial predictions:", e)
+        adversarial_pred_img = None
 
-    # Run and save predictions with unique save directories
-    original_save_dir = "runs/detect/original_pred"
-    adversarial_save_dir = "runs/detect/adversarial_pred"
-
-    print("original_pred: ", end="")
-    model(image_path, conf=conf_threshold, save=True, project="runs/detect", name="original_pred", exist_ok=True)
-
-    print("adversarial_pred: ", end="")
-    adv_image_path = 'adversarial_image.png'
-
-    # Ensure proper conversion before saving
-    adversarial_image = adversarial_image.clone().detach()
-    bgr_image = cv2.cvtColor(
-        (adversarial_image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8), 
-        cv2.COLOR_RGB2BGR
-    )
-    cv2.imwrite(adv_image_path, bgr_image)
-
-    model(adv_image_path, conf=conf_threshold, save=True, project="runs/detect", name="adversarial_pred", exist_ok=True)
-
-    # Locate saved prediction images (use dynamic filename search)
-    original_pred_path = find_predicted_image(original_save_dir, os.path.basename(image_path))
-    adversarial_pred_path = find_predicted_image(adversarial_save_dir, os.path.basename(adv_image_path))
-
-    print(f"Original prediction found: {original_pred_path}")
-    print(f"Adversarial prediction found: {adversarial_pred_path}")
-
-    if not (original_pred_path and adversarial_pred_path):
-        print("Predicted images not found.")
-        return
-
-    # Load prediction images
-    original_pred_np = cv2.imread(original_pred_path)
-    adversarial_pred_np = cv2.imread(adversarial_pred_path)
-
-    # Convert BGR to RGB for proper display
-    original_pred_np = cv2.cvtColor(original_pred_np, cv2.COLOR_BGR2RGB)
-    adversarial_pred_np = cv2.cvtColor(adversarial_pred_np, cv2.COLOR_BGR2RGB)
-
-    # Convert tensors to displayable format
-    adversarial_image_np = (adversarial_image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    original_image_np = (image.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-
-    # Display Original vs Adversarial Image (Raw)
+    # Display raw images
     plt.figure(figsize=(10, 5))
-
     plt.subplot(1, 2, 1)
-    plt.imshow(original_image_np)
+    plt.imshow(original_np)
     plt.axis('off')
     plt.title("Original Image")
-
+    
     plt.subplot(1, 2, 2)
-    plt.imshow(adversarial_image_np)
+    plt.imshow(adversarial_np)
     plt.axis('off')
     plt.title("Adversarial Image")
-
     plt.show()
-
-    # Display Original Prediction vs Adversarial Prediction
-    plt.figure(figsize=(10, 5))
-
-    plt.subplot(1, 2, 1)
-    plt.imshow(original_pred_np)
-    plt.axis('off')
-    plt.title("Original Prediction")
-
-    plt.subplot(1, 2, 2)
-    plt.imshow(adversarial_pred_np)
-    plt.axis('off')
-    plt.title("Adversarial Prediction")
-
-    plt.show()
+    
+    # Display predictions (if available)
+    if original_pred_img is not None and adversarial_pred_img is not None:
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.imshow(original_pred_img)
+        plt.axis('off')
+        plt.title("Original Prediction")
+    
+        plt.subplot(1, 2, 2)
+        plt.imshow(adversarial_pred_img)
+        plt.axis('off')
+        plt.title("Adversarial Prediction")
+        plt.show()
+    else:
+        print("Could not render one or both prediction images.")
