@@ -210,3 +210,93 @@ def compare_original_and_adversarial(model, image_path, adversarial_image, conf_
         plt.show()
     else:
         print("Could not render one or both prediction images.")
+
+import os
+import numpy as np
+import torch
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from torchvision.utils import save_image
+from PIL import Image
+import torchvision.transforms as transforms
+
+
+def compare_original_and_adversarial_png(model, image_path, adversarial_image, conf_threshold):
+    """
+    Compares the original and adversarial images by:
+      1. Preprocessing the original image and running a prediction.
+      2. Saving the adversarial tensor as a PNG image.
+      3. Loading the saved PNG image as a tensor (which may lose some precision).
+      4. Running predictions on both images and displaying the results.
+      
+    Args:
+        model: The YOLO model to run predictions.
+        image_path (str): Path to the original image.
+        adversarial_image (torch.Tensor): Adversarial image tensor (shape [1, C, H, W], values in [0,1]).
+        conf_threshold (float): Confidence threshold for predictions.
+    """
+    # Preprocess the original image (assuming preprocess_image returns a tensor in the expected format)
+    original_tensor = preprocess_image(image_path)
+    
+    # Run prediction on the original tensor
+    print("Running prediction on original tensor...")
+    original_results = model(original_tensor, conf=conf_threshold)
+    
+    # Save the adversarial image as a PNG (this will quantize values to 8-bit)
+    adv_image_path = "adversarial_image.png"
+    adversarial_tensor = adversarial_image.clone().detach()  # ensure no gradient is attached
+    save_image(adversarial_tensor, adv_image_path)  # saves as PNG by default based on the filename extension
+    
+    # Load the saved PNG as a tensor (using PIL and torchvision transforms)
+    adv_img_pil = Image.open(adv_image_path).convert("RGB")
+    transform = transforms.ToTensor()  # Converts image to tensor in [0,1]
+    loaded_adv_tensor = transform(adv_img_pil).unsqueeze(0)  # shape: [1, C, H, W]
+    
+    print("Running prediction on loaded adversarial tensor...")
+    adversarial_results = model(loaded_adv_tensor, conf=conf_threshold)
+    
+    # For display, convert tensors to numpy arrays scaled to 0-255 for visualization
+    original_np = (original_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    adversarial_np = (adversarial_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    
+    # Render prediction outputs if available (assuming results[0] has a .plot() method)
+    try:
+        original_pred_img = original_results[0].plot()
+    except Exception as e:
+        print("Error rendering original predictions:", e)
+        original_pred_img = None
+
+    try:
+        adversarial_pred_img = adversarial_results[0].plot()
+    except Exception as e:
+        print("Error rendering adversarial predictions:", e)
+        adversarial_pred_img = None
+
+    # Display raw images side by side
+    plt.figure(figsize=(10, 5))
+    plt.subplot(1, 2, 1)
+    plt.imshow(original_np)
+    plt.axis('off')
+    plt.title("Original Image")
+    
+    plt.subplot(1, 2, 2)
+    plt.imshow(adversarial_np)
+    plt.axis('off')
+    plt.title("Adversarial Image (PNG)")
+    plt.show()
+    
+    # Display predictions side by side (if available)
+    if original_pred_img is not None and adversarial_pred_img is not None:
+        plt.figure(figsize=(10, 5))
+        plt.subplot(1, 2, 1)
+        plt.imshow(original_pred_img)
+        plt.axis('off')
+        plt.title("Original Prediction")
+    
+        plt.subplot(1, 2, 2)
+        plt.imshow(adversarial_pred_img)
+        plt.axis('off')
+        plt.title("Adversarial Prediction (PNG)")
+        plt.show()
+    else:
+        print("Could not render one or both prediction images.")
