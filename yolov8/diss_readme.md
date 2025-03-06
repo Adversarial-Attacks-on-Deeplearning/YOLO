@@ -1,3 +1,5 @@
+
+
 # Adversarial Patch Attack on YOLO Object Detection
 
 ## Overview
@@ -25,43 +27,14 @@ This loss function minimizes the confidence of the target class in the YOLO dete
 #### **Mathematical Definition:**
 The disappearance loss is formulated as:
 
-\[
-J_d(x,y) = \max_{s \in S^2, b \in B} P(s,b,y,f_\theta (x))
-\]
+
+$J_d(x,y) = \max_{s \in S^2, b \in B} P(s,b,y,f_\theta (x))$
 
 where:
 - \( f_\theta(x) \) represents the output of the YOLO object detector.
 - \( P(s,b,y,f_\theta(x)) \) extracts the probability of the target class \( y \) in grid cell \( s \) and bounding box \( b \).
 - The attack minimizes this probability until it falls below the detection threshold (typically 0.25).
 
-#### **Code Implementation:**
-
-```python
-def calculate_disappearance_loss(self, results, target_class):
-    """Calculate the loss based on the confidence of the target class."""
-    max_conf = 0.0
-    found_target = False
-    target_confidences = []
-    
-    # Extract confidence scores for target class
-    for i in range(len(results[0].boxes)):
-        cls = int(results[0].boxes.cls[i].item())
-        if cls == target_class:
-            conf = results[0].boxes.conf[i]
-            target_confidences.append(conf)
-            found_target = True
-    
-    if found_target and target_confidences:
-        confidences_tensor = torch.stack(target_confidences)
-        max_conf_tensor = torch.max(confidences_tensor)
-        max_conf = max_conf_tensor.item()
-        loss = max_conf_tensor  # Minimize this loss
-    else:
-        max_conf = 0.0
-        loss = torch.tensor(0.01, device=self.device, requires_grad=True)  # Attack success
-        
-    return loss, max_conf
-```
 
 ✅ **Objective**: Reduce the confidence of the target class to make it disappear from the detection results.
 
@@ -72,49 +45,29 @@ This loss is used as a regularization term to ensure the patch is smooth and doe
 #### **Mathematical Definition:**
 The total variation loss is defined as:
 
-\[
-TV(M_x \cdot \delta) = \sum_{i,j} |(M_x \cdot \delta)_{i+1,j} - (M_x \cdot \delta)_{i,j}| + |(M_x \cdot \delta)_{i,j+1} - (M_x \cdot \delta)_{i,j}|
-\]
+
+$TV(M_x \cdot \delta) = \sum_{i,j} |(M_x \cdot \delta)_{i+1,j} - (M_x \cdot \delta)_{i,j}| + |(M_x \cdot \delta)_{i,j+1} - (M_x \cdot \delta)_{i,j}|$
 
 where:
 - \( M_x \) is the mask defining the patch area.
 - \( \delta \) is the adversarial perturbation.
 - The summation ensures smoothness by penalizing pixel-level differences.
 
-#### **Code Implementation:**
 
-```python
-def total_variation_loss(self, patch):
-    """Calculate Total Variation loss to encourage patch smoothness."""
-    # Compute differences in x and y directions
-    diff_x = torch.abs(patch[:, :, :-1] - patch[:, :, 1:])
-    diff_y = torch.abs(patch[:, :-1, :] - patch[:, 1:, :])
-    
-    # Sum all differences
-    tv_loss = torch.sum(diff_x) + torch.sum(diff_y)
-    
-    return tv_loss
-```
 
 ✅ **Objective**: Prevent adversarial patches from having sharp edges or unrealistic pixel variations.
 
-### **Final Combined Loss**
+
 
 The final loss function combines the disappearance loss and total variation loss:
 
-\[
-\mathcal{L}_{\text{total}} = J_d(x,y) + \lambda TV(M_x \cdot \delta)
-\]
+$\mathcal{L}_{\text{total}} = J_d(x,y) + \lambda TV(M_x \cdot \delta)$
+
 
 where \( \lambda \) is a weight parameter to balance between adversarial effectiveness and smoothness.
 
-#### **Implementation:**
 
-```python
-tv_weight = 0.1  # Adjust based on results
-tv_loss = self.total_variation_loss(patch)
-total_loss = loss + tv_weight * tv_loss
-```
+
 
 ✅ **Overall Objective:**
 
@@ -171,18 +124,7 @@ optimized_patches, final_conf = attack.train(
 - The attack generates optimized adversarial patches that minimize the detection confidence of the target object.
 - The patches are saved as `.tiff` images, and the final adversarial image is visualized and saved as `final_result_multi.png`.
 
-## Future Improvements
-
-- Implement more advanced transformations for better robustness.
-- Extend attack to different object detection models.
-- Optimize runtime performance using efficient gradient computation techniques.
-
-## References
-
-- [YOLO Object Detection](https://github.com/ultralytics/yolov8)
-- [Adversarial Machine Learning](https://arxiv.org/abs/1412.6572)
 
 ---
 
-**Disclaimer:** This project is intended for research and educational purposes only. Unauthorized use for malicious purposes is strictly prohibited.
 
