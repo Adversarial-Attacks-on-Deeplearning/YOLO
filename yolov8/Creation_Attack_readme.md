@@ -37,4 +37,6 @@ The approach includes:
 ![det3](https://github.com/user-attachments/assets/b77fe74d-e09f-441a-8963-04a363969c2c)
 
 
+### Initial patch used:
+![ss_patch](https://github.com/user-attachments/assets/d19615d9-c82d-4cc2-a99a-c5eeb8dab2d1)
 
