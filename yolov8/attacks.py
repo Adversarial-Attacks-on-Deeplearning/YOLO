@@ -4,6 +4,7 @@ from util import preprocess_image  # custom function
 import torch.nn.functional as F
 import os
 import numpy as np
+from typing import Optional
 from PIL import Image
 from torchvision import transforms
 
