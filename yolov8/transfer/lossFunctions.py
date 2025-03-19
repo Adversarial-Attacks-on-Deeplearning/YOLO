@@ -54,47 +54,24 @@ def l2_loss(clean_image: torch.Tensor, adversarial_image: torch.Tensor) -> torch
     """
     return F.mse_loss(clean_image, adversarial_image)
 
-def yolo_attack_loss(
-    yolo_results: ultralytics.engine.results.Results,
-    target_class: int = None,
-    true_class: int = None,
-    mode: str = "untargeted"
-) -> torch.Tensor:
-    """
-    Compute adversarial loss based on YOLOv8 predictions.
-    
-    Args:
-        yolo_results: YOLOv8 output for the adversarial image.
-        target_class: Desired wrong class (for targeted attacks).
-        true_class: Original class to attack (for targeted attacks).
-        mode: 'untargeted' (suppress detections) or 'targeted' (misclassify).
-        
-    Returns:
-        Loss value to minimize.
-    """
+def yolo_class_loss(yolo_results, mode="untargeted", target_class=None, true_class=None):
     loss = torch.tensor(0.0, device=yolo_results.boxes.conf.device)
     
     if yolo_results.boxes.shape[0] == 0:
-        return loss  # No detections
+        return loss  # No detections to attack
     
-    # Extract predictions: [x1, y1, x2, y2, conf, class]
-    boxes = yolo_results.boxes
-    confs = boxes.conf  # Objectness scores [N]
-    class_probs = boxes.cls  # Class probabilities [N, num_classes]
+    # Extract predictions
+    confs = yolo_results.boxes.conf  # Objectness scores [N]
+    cls_probs = yolo_results.boxes.cls  # Class probabilities [N, C]
     
     if mode == "untargeted":
-        # Penalize high confidence & class certainty for traffic signs
-        loss = torch.sum(confs * torch.max(class_probs, dim=1)[0])
+        # Suppress all detections: penalize high confidence + class certainty
+        loss = torch.sum(confs * torch.max(cls_probs, dim=1)[0])
         
     elif mode == "targeted":
-        # Ensure correct args are provided
-        assert target_class is not None and true_class is not None
-        
-        # Get probabilities for true and target classes
-        true_probs = class_probs[:, true_class]  # [N]
-        target_probs = class_probs[:, target_class]  # [N]
-        
-        # Encourage low confidence for true class, high for target
+        # Force misclassification (e.g., "car" → "dog")
+        true_probs = cls_probs[:, true_class]  # [N]
+        target_probs = cls_probs[:, target_class]  # [N]
         loss = torch.sum(confs * (true_probs - target_probs))
         
     return loss

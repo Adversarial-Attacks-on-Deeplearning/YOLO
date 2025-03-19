@@ -595,3 +595,84 @@ def optimize_patch(
             
             
     return patched_image.detach().cpu(),patch.detach().cpu()
+
+
+
+
+import torch
+from tqdm import tqdm
+from ultralytics import YOLO
+
+def generate_yolov8_uap(
+    model: YOLO,
+    dataloader: torch.utils.data.DataLoader,
+    epsilon: float = 8/255,
+    lr: float = 0.01,
+    num_epochs: int = 10,
+    device: str = "cuda",
+    verbose: bool = True
+) -> torch.Tensor:
+    """
+    Generates a Universal Adversarial Perturbation (UAP) for YOLOv8.
+    
+    Args:
+        model (YOLO): Pretrained YOLOv8 model
+        dataloader (DataLoader): Training data loader with (images, targets)
+        epsilon (float): Maximum perturbation magnitude (L∞ norm)
+        lr (float): Learning rate for optimization
+        num_epochs (int): Number of attack epochs
+        device (str): Device for computation ('cuda' or 'cpu')
+        verbose (bool): Print progress
+    
+    Returns:
+        torch.Tensor: Universal adversarial perturbation tensor (C, H, W)
+    """
+    
+    # Initialize perturbation
+    img_sample, _ = next(iter(dataloader))
+    _, C, H, W = img_sample.shape
+    delta = torch.zeros((1, C, H, W), requires_grad=True, device=device)
+    
+    # Optimizer (SGD with momentum works better for UAP)
+    optimizer = torch.optim.SGD([delta], lr=lr, momentum=0.9)
+    
+    # Training loop
+    model.to(device)
+    model.train()  # Required to access loss components
+    
+    for epoch in range(num_epochs):
+        epoch_loss = 0
+        
+        for images, targets in tqdm(dataloader, disable=not verbose):
+            images = images.to(device)
+            targets = [{"bbox": t[0].to(device), "cls": t[1].to(device)} for t in targets]
+            
+            # Apply perturbation (before model preprocessing)
+            perturbed_images = torch.clamp(images + delta, 0, 1)
+            
+            # Forward pass (YOLOv8 returns loss dict in training mode)
+            outputs = model(perturbed_images)
+            
+            # Extract YOLOv8's composite loss
+            loss = sum([
+                outputs.loss_box,  # Bounding box regression loss
+                outputs.loss_cls,  # Classification loss
+                outputs.loss_obj   # Objectness loss
+            ])
+            
+            # Maximize loss to degrade detection
+            optimizer.zero_grad()
+            (-loss).backward()  # Gradient ascent
+            optimizer.step()
+            
+            # Project perturbation to epsilon L∞-ball
+            with torch.no_grad():
+                delta.data = torch.clamp(delta, -epsilon, epsilon)
+            
+            epoch_loss += loss.item()
+        
+        if verbose:
+            avg_loss = epoch_loss / len(dataloader)
+            print(f"Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f}")
+
+    return delta.data.squeeze(0)  # Return (C, H, W) perturbation
