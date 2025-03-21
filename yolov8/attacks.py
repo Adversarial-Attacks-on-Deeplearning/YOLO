@@ -1,3 +1,4 @@
+
 import torch
 from ultralytics import YOLO
 from util import preprocess_image  # custom function
@@ -711,81 +712,104 @@ def fgsm_attack_detector(
 
 
 
-
 import torch
-from tqdm import tqdm
-from ultralytics import YOLO
 
-def generate_yolov8_uap(
-    model: YOLO,
-    dataloader: torch.utils.data.DataLoader,
-    epsilon: float = 8/255,
-    lr: float = 0.01,
-    num_epochs: int = 10,
-    device: str = "cuda",
-    verbose: bool = True
-) -> torch.Tensor:
+def train_universal_attack(
+    model,
+    final_image_paths,
+    preprocess_fn,
+    device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
+    num_epochs_uap=20,
+    lambda_reg=0.01,
+    epsilon=0.1,
+    conf_threshold=0.2,
+    lr=0.1,
+    momentum=0.9
+):
     """
-    Generates a Universal Adversarial Perturbation (UAP) for YOLOv8.
-    
-    Args:
-        model (YOLO): Pretrained YOLOv8 model
-        dataloader (DataLoader): Training data loader with (images, targets)
-        epsilon (float): Maximum perturbation magnitude (L∞ norm)
-        lr (float): Learning rate for optimization
-        num_epochs (int): Number of attack epochs
-        device (str): Device for computation ('cuda' or 'cpu')
-        verbose (bool): Print progress
-    
-    Returns:
-        torch.Tensor: Universal adversarial perturbation tensor (C, H, W)
+    Trains a universal adversarial perturbation (delta) for the given YOLO model.
+
+    :param model: The YOLO model (with .model as PyTorch module).
+    :param final_image_paths: List of image paths used to train the universal perturbation.
+    :param preprocess_fn: A function to preprocess a given image_path -> returns a torch.Tensor [1, C, H, W].
+    :param device: Torch device (e.g., cuda or cpu).
+    :param num_epochs_uap: Number of epochs to train.
+    :param lambda_reg: Regularization coefficient for delta's L2 norm.
+    :param epsilon: Clamping range for the universal delta in each pixel dimension.
+    :param conf_threshold: Confidence threshold to filter detections.
+    :param lr: Learning rate for SGD.
+    :param momentum: Momentum for SGD.
+
+    :return: The learned universal delta (torch.Tensor) and a list of (epoch_loss) for each epoch.
     """
-    
-    # Initialize perturbation
-    img_sample, _ = next(iter(dataloader))
-    _, C, H, W = img_sample.shape
-    delta = torch.zeros((1, C, H, W), requires_grad=True, device=device)
-    
-    # Optimizer (SGD with momentum works better for UAP)
-    optimizer = torch.optim.SGD([delta], lr=lr, momentum=0.9)
-    
-    # Training loop
-    model.to(device)
-    model.train()  # Required to access loss components
-    
-    for epoch in range(num_epochs):
-        epoch_loss = 0
-        
-        for images, targets in tqdm(dataloader, disable=not verbose):
-            images = images.to(device)
-            targets = [{"bbox": t[0].to(device), "cls": t[1].to(device)} for t in targets]
-            
-            # Apply perturbation (before model preprocessing)
-            perturbed_images = torch.clamp(images + delta, 0, 1)
-            
-            # Forward pass (YOLOv8 returns loss dict in training mode)
-            outputs = model(perturbed_images)
-            
-            # Extract YOLOv8's composite loss
-            loss = sum([
-                outputs.loss_box,  # Bounding box regression loss
-                outputs.loss_cls,  # Classification loss
-                outputs.loss_obj   # Objectness loss
-            ])
-            
-            # Maximize loss to degrade detection
+    # Move model to device
+    model.model.to(device)
+
+    # Use one sample to get shape for delta initialization
+    img_sample = preprocess_fn(final_image_paths[0]).to(device)
+    delta = torch.zeros_like(img_sample, requires_grad=True, device=device)
+
+    # Set up optimizer for delta
+    optimizer = torch.optim.SGD([delta], lr=lr, momentum=momentum)
+
+    # Record epoch losses if you want to track progress
+    epoch_losses = []
+
+    for epoch in range(num_epochs_uap):
+        epoch_loss = 0.0
+
+        for image_path in final_image_paths:
+            image = preprocess_fn(image_path).to(device)
+
+            # For universal perturbation, same delta for all images
+            adv_image = image + delta
+
+            # Forward pass on perturbed image
+            raw_outputs = model.model(adv_image)
+            if raw_outputs[0].shape[-1] < 5:
+                raise RuntimeError(
+                    f"Unexpected output format. Expected at least 5 channels, got {raw_outputs[0].shape[-1]}"
+                )
+
+            raw_preds = raw_outputs[0]
+            num_classes = raw_preds.shape[-1] - 5
+
+            obj_scores = raw_preds[..., 4:5]
+            cls_logits = raw_preds[..., 5:]
+
+            obj_probs = obj_scores.sigmoid()
+            cls_probs = cls_logits.softmax(dim=-1).max(dim=-1, keepdim=True)[0]
+            conf_scores = obj_probs * cls_probs
+
+            mask = conf_scores.squeeze(-1) > conf_threshold
+            if not mask.any():
+                # No detections => skip
+                continue
+
+            target_classes = cls_logits.argmax(dim=-1)[mask].detach()
+            current_logits = cls_logits[mask]
+
+            classification_loss = torch.nn.functional.cross_entropy(
+                current_logits, target_classes
+            )
+
+            # Optional L2 reg on delta
+            reg_loss = lambda_reg * torch.norm(delta, p=2)
+            total_loss = classification_loss + reg_loss
+
             optimizer.zero_grad()
-            (-loss).backward()  # Gradient ascent
+            total_loss.backward()
             optimizer.step()
-            
-            # Project perturbation to epsilon L∞-ball
+
             with torch.no_grad():
                 delta.data = torch.clamp(delta, -epsilon, epsilon)
-            
-            epoch_loss += loss.item()
-        
-        if verbose:
-            avg_loss = epoch_loss / len(dataloader)
-            print(f"Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f}")
 
-    return delta.data.squeeze(0)  # Return (C, H, W) perturbation
+            epoch_loss += total_loss.item()
+
+        avg_loss = epoch_loss / len(final_image_paths)
+        epoch_losses.append(avg_loss)
+        print(f"UAP Epoch [{epoch+1}/{num_epochs_uap}] Loss: {avg_loss:.4f}")
+
+    print("Training complete.")
+    return delta, epoch_losses
+
