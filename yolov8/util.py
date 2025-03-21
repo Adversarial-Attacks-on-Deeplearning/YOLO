@@ -14,10 +14,11 @@ import random
 import matplotlib.pyplot as plt
 import tifffile
 from PIL import Image
+import random
 
 
 
-def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+def letterbox(img, new_shape=(640, 640), color=(114, 114, 114), auto=False, scaleFill=True, scaleup=True, stride=32):
     """
     Resize and pad image while meeting stride-multiple constraints.
 
@@ -87,7 +88,7 @@ def preprocess_image(image_path):
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
     # Step 2: Letterbox resize to desired dimensions (e.g., 640x640)
-    img_resized, ratio, pad = letterbox(img_rgb, new_shape=(640, 640), auto=True)
+    img_resized, ratio, pad = letterbox(img_rgb, new_shape=(640, 640), auto=False)
 
     # Step 3: Convert image to float and normalize pixel values to [0, 1]
     img_normalized = img_resized.astype(np.float32) / 255.0
@@ -257,7 +258,7 @@ def compare_original_and_adversarial_png(model, image_path, adversarial_image, c
     
     # For display, convert tensors to numpy arrays scaled to 0-255 for visualization
     original_np = (original_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-    adversarial_np = (adversarial_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+    adversarial_np = (loaded_adv_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
     
     # Render prediction outputs if available (assuming results[0] has a .plot() method)
     try:
@@ -300,3 +301,74 @@ def compare_original_and_adversarial_png(model, image_path, adversarial_image, c
         plt.show()
     else:
         print("Could not render one or both prediction images.")
+
+
+
+
+def sample_images_by_class(
+    images_dir: str,
+    labels_dir: str,
+    num_per_class: int = 100
+):
+    """
+    Collect up to `num_per_class` images for each class from YOLO-style
+    images/labels folders, ensuring a roughly balanced distribution.
+
+    :param images_dir: Path to the folder containing images.
+    :param labels_dir: Path to the folder containing corresponding .txt labels.
+    :param num_per_class: Maximum number of images to select for each class.
+    :return: (final_image_paths, class_distribution)
+       - final_image_paths: a list of unique image paths after balancing.
+       - class_distribution: a dict: class_id -> count of images in final_image_paths.
+    """
+    images_by_class = {}
+
+    # 1. Group images by class
+    for filename in os.listdir(images_dir):
+        # only process valid images
+        if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+            base_name = os.path.splitext(filename)[0]
+
+            # Look for the label in the labels folder
+            txt_path = os.path.join(labels_dir, base_name + ".txt")
+            if not os.path.exists(txt_path):
+                # no label => skip
+                continue
+
+            # read YOLO label file
+            with open(txt_path, 'r') as f:
+                lines = f.read().strip().splitlines()
+
+            # gather classes
+            classes_in_this_image = set()
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                class_id_str = parts[0]
+                class_id = int(class_id_str)
+                classes_in_this_image.add(class_id)
+
+            # store the image path under each relevant class
+            full_image_path = os.path.join(images_dir, filename)
+            for c in classes_in_this_image:
+                images_by_class.setdefault(c, []).append(full_image_path)
+
+    # 2. Stratified sampling
+    final_image_paths = []
+    for c, img_list in images_by_class.items():
+        random.shuffle(img_list)
+        selected = img_list[:num_per_class]
+        final_image_paths.extend(selected)
+
+    # remove duplicates if an image belongs to multiple classes
+    final_image_paths = list(set(final_image_paths))
+    random.shuffle(final_image_paths)
+
+    # 3. Build a dictionary of final distribution
+    class_distribution = {}
+    for c, img_list in images_by_class.items():
+        count = len(set(img_list).intersection(final_image_paths))
+        class_distribution[c] = count
+
+    return final_image_paths, class_distribution
