@@ -1,112 +1,74 @@
-# load_data_set.py
 import os
-import yaml
-import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt
-import numpy as np
-import glob
+from torchvision import transforms
+from PIL import Image
 
-class TrafficSignDataset(Dataset):
-    def __init__(self, data_yaml, split='train', transform=None):
-        with open(data_yaml, 'r') as f:
-            data = yaml.safe_load(f)
-            
-        self.root_dir = os.path.dirname(data_yaml)
-        self.split = split
-        self.image_dir = data[split]
-        self.nc = data['nc']
-        self.class_names = data['names']
+class YOLODataset(Dataset):
+    def __init__(self, image_dir, transform=None):
+        """
+        Custom dataset for loading images.
+
+        Args:
+            image_dir (str): Path to the image directory.
+            transform (callable, optional): Transformations to apply.
+        """
+        self.image_dir = image_dir
+        self.image_files = [f for f in os.listdir(image_dir) if f.endswith(('.jpg', '.png'))]
         self.transform = transform
-        
-        # Get list of image files
-        self.image_files = []
-        for ext in ['*.jpg', '*.jpeg', '*.png', '*.JPG']:
-            self.image_files.extend(
-                sorted(glob.glob(os.path.join(self.root_dir, self.image_dir, ext)))
-            )
 
     def __len__(self):
         return len(self.image_files)
 
     def __getitem__(self, idx):
-        img_path = self.image_files[idx]
-        label_path = img_path.replace('images', 'labels').replace(os.path.splitext(img_path)[1], '.txt')
-        
-        # Load image
-        image = cv2.imread(img_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Load labels
-        boxes = []
-        classes = []
-        if os.path.exists(label_path):
-            with open(label_path, 'r') as f:
-                for line in f.readlines():
-                    class_id, x_center, y_center, width, height = map(float, line.strip().split())
-                    boxes.append([x_center, y_center, width, height])
-                    classes.append(class_id)
-        
-        # Convert to tensors
-        boxes = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
-        classes = torch.tensor(classes, dtype=torch.long) if classes else torch.zeros((0,))
-        
-        # Apply transforms
+        img_path = os.path.join(self.image_dir, self.image_files[idx])
+        image = Image.open(img_path).convert("RGB")
+
         if self.transform:
             image = self.transform(image)
-        else:
-            # Default transform: convert to tensor and normalize
-            image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
 
-        return image, {'boxes': boxes, 'labels': classes}
+        return image
 
-def test_dataset():
-    # Load the dataset
-    dataset = TrafficSignDataset('/home/salma/graduation_project/YOLO/yolov8/Self-Driving Cars.v1i.yolov8/data.yaml', split='train')
-    
-    # Create DataLoader
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2)
-    
-    # Get a batch
-    images, targets = next(iter(dataloader))
-    
-    print(f"Dataset contains {len(dataset)} images")
-    print(f"Batch shape: {images.shape}")
-    print(f"Number of classes: {dataset.nc}")
-    print(f"Class names: {dataset.class_names}")
-    
-    # Visualize first sample
-    img = images[0].permute(1, 2, 0).numpy()
-    boxes = targets['boxes'][0]
-    labels = targets['labels'][0]
-    
-    plt.figure(figsize=(10, 6))
-    plt.imshow(img)
-    
-    # Draw bounding boxes
-    for box, label in zip(boxes, labels):
-        x_center, y_center, width, height = box.numpy()
-        x_min = int((x_center - width/2) * img.shape[1])
-        y_min = int((y_center - height/2) * img.shape[0])
-        x_max = int((x_center + width/2) * img.shape[1])
-        y_max = int((y_center + height/2) * img.shape[0])
+def get_data_loaders(train_dir, valid_dir, test_dir, batch_size=32, image_size=256):
+    """
+    Creates PyTorch DataLoaders for GAN training.
+
+    Args:
+        train_dir (str): Directory for training images.
+        valid_dir (str): Directory for validation images.
+        test_dir (str): Directory for test images.
+        batch_size (int): Batch size for training.
+        image_size (int): Resizing target for images.
+
+    Returns:
+        dict: Dataloaders for train, validation, and test sets.
+    """
+    transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)),  # Resize images
+        transforms.ToTensor(),  # Convert to tensor
         
-        plt.gca().add_patch(plt.Rectangle(
-            (x_min, y_min), 
-            x_max - x_min, 
-            y_max - y_min,
-            linewidth=2,
-            edgecolor='r',
-            facecolor='none'
-        ))
-        plt.text(x_min, y_min - 5, 
-                f'{dataset.class_names[int(label)]}',
-                color='red', fontsize=12, backgroundcolor='white')
-    
-    plt.axis('off')
-    plt.title('Sample Image with Annotations')
-    plt.show()
+    ])
 
-if __name__ == '__main__':
-    test_dataset()
+    train_dataset = YOLODataset(train_dir, transform=transform)
+    valid_dataset = YOLODataset(valid_dir, transform=transform)
+    test_dataset = YOLODataset(test_dir, transform=transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
+
+    return {"train": train_loader, "valid": valid_loader, "test": test_loader}
+
+if __name__ == "__main__":
+    # Define your directories as arguments
+    train_dir = "/home/salma/graduation_project/YOLO/yolov8/Self-Driving Cars.v1i.yolov8/train/images"
+    valid_dir = "/home/salma/graduation_project/YOLO/yolov8/Self-Driving Cars.v1i.yolov8/valid/images"
+    test_dir = "/home/salma/graduation_project/YOLO/yolov8/Self-Driving Cars.v1i.yolov8/test/images"
+
+    # Load dataset
+    dataloaders = get_data_loaders(train_dir, valid_dir, test_dir, batch_size=16, image_size=256)
+
+    # Get training batch
+    for batch in dataloaders["train"]:
+        print(batch.shape)  # Expected: (batch_size, 3, 256, 256)
+        break
