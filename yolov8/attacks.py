@@ -11,8 +11,7 @@ from torchvision import transforms
 
 def disappearance_dag_attack(
     image_path,
-    raw_model_path='yolov8n.pt',
-    high_level_model_path='yolov8n.pt',
+    model_path='yolov8n.pt',
     num_iterations=10,
     gamma=0.03,
     conf_threshold=0.5,
@@ -34,17 +33,10 @@ def disappearance_dag_attack(
     """
 
     # ----------------------------------------------------------------
-    # 1. Load the models
+    # 1. load the model
     # ----------------------------------------------------------------
-    # High-level model (used for convenience to see post-processed predictions)
-    high_level_model = YOLO(high_level_model_path)
-
-    # Underlying raw model (used for gradient computations)
-    underlying_model = YOLO(raw_model_path).model
-    underlying_model.eval()
-    for param in underlying_model.parameters():
-        param.requires_grad = False
-    underlying_model.to(device)
+    model = YOLO(model_path).to(device)
+    
 
     # ----------------------------------------------------------------
     # 2. Preprocess and load the image
@@ -61,7 +53,7 @@ def disappearance_dag_attack(
         # (a) Forward pass through the raw underlying model
         # ------------------------------------------------------------
         # The raw model can return a tuple (preds, training_outputs), so unpack:
-        raw_preds, _ = underlying_model(image)
+        raw_preds,_ = model.model(image)
 
         # raw_preds might be shape [1, 84, N], so we permute to [1, N, 84]
         raw_preds = raw_preds.permute(0, 2, 1)  # now [1, N, 84]
@@ -80,7 +72,7 @@ def disappearance_dag_attack(
         # Let's see what the *high-level* model is currently predicting
         # (This is optional, but helps you track final bounding boxes, etc.)
         with torch.no_grad():
-            high_level_preds = high_level_model(image, conf=conf_threshold)
+            high_level_preds = model(image, conf=conf_threshold)
         results = high_level_preds[0]  # 'Results' object
         pred_class_ids = results.boxes.cls.tolist()  # the classes YOLO is showing after NMS
 
@@ -141,8 +133,7 @@ def disappearance_dag_attack(
 
 def targeted_dag_attack(
     image_path,
-    raw_model_path='yolov8n.pt',
-    high_level_model_path='yolov8n.pt',
+    model_path='yolov8n.pt',
     adversarial_class=2,
     num_iterations=10,
     gamma=0.03,
@@ -170,8 +161,8 @@ def targeted_dag_attack(
     # ---------------------------------------------------------------
     # 1. Load the models
     # ---------------------------------------------------------------
-    high_level_model = YOLO(high_level_model_path)
-    underlying_model = YOLO(raw_model_path).model
+    high_level_model = YOLO(model_path)
+    underlying_model = YOLO(model_path).model
     underlying_model.eval()
     for param in underlying_model.parameters():
         param.requires_grad = False
@@ -269,14 +260,26 @@ def targeted_dag_attack(
 
         print(f"Iteration {iteration}: #rows_to_attack={len(rows_to_attack)}, loss={loss.item():.4f}")
 
-    return image.detach()
+    # ---------------------------------------------------------------
+    # Final check: determine if attack was successful.
+    # ---------------------------------------------------------------
+    with torch.no_grad():
+        final_preds = high_level_model(image, conf=conf_threshold)
+    final_results = final_preds[0]
+    final_class_ids = set(int(box.cls.item()) for box in final_results.boxes)
+    success = (adversarial_class in final_class_ids) and final_class_ids.isdisjoint(target_classes)
+    if success:
+        print("Attack successful: adversarial_class present and original target classes are gone.")
+    else:
+        print("Attack failed: conditions not met.")
+
+    return image.detach(), success
 
 
 
 def fool_detectors_attack(
     image_path,
-    raw_model_path='yolov8n.pt',
-    high_level_model_path='yolov8n.pt',
+    model_path='yolov8n.pt',
     num_iterations=10,
     gamma=0.03,
     conf_threshold=0.5,
@@ -316,8 +319,8 @@ def fool_detectors_attack(
     # --------------------------------------------------------------------------
     # The high-level model is used to check detection results (post-processing),
     # while the underlying (raw) model is used for gradient-based updates.
-    high_level_model = YOLO(high_level_model_path)
-    underlying_model = YOLO(raw_model_path).model
+    high_level_model = YOLO(model_path)
+    underlying_model = YOLO(model_path).model
     underlying_model.eval()  # Set to evaluation mode.
     # Disable gradient computations for the underlying model parameters.
     for param in underlying_model.parameters():
