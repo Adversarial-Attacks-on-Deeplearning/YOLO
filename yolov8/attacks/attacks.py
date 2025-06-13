@@ -817,7 +817,7 @@ def train_universal_attack(
 
 def pgd_attack_detector(
     image_path: str,
-    model_path: str = 'yolov8n.pt',
+    model: YOLO,
     epsilon: float = 0.05,
     num_steps: int = 7,
     step_size: float = 0.005,
@@ -833,7 +833,7 @@ def pgd_attack_detector(
 
     Args:
         image_path (str): Path to the input image file (JPG/PNG)
-        model_path (str): Path to YOLOv8 detection model weights (default: 'yolov8n.pt')
+        model (YOLO): Initialized YOLOv8 detection model
         epsilon (float): Maximum L∞ perturbation magnitude (typically 0.01-0.1)
         num_steps (int): Number of PGD iterations (default: 7)
         step_size (float): Perturbation step size per iteration (default: 0.005, typically ε/4 or smaller)
@@ -850,8 +850,8 @@ def pgd_attack_detector(
     """
     
     # 1. Model and Image Preparation ===========================================
-    # Load YOLOv8 detection model and move to target device
-    model = YOLO(model_path).to(device)
+    # Move model to target device
+    model = model.to(device)
     
     # Preprocess image (normalization, resizing) and enable gradient tracking
     # preprocess_image() should return tensor of shape [1, 3, H, W] in [0,1] range
@@ -916,10 +916,7 @@ def pgd_attack_detector(
             target_classes
         )
 
-        # Optional: Add bounding box regression loss (unchanged from FGSM)
-        # target_boxes = box_coords[mask].detach()
-        # box_loss = torch.nn.functional.smooth_l1_loss(box_coords[mask], target_boxes)
-        # total_loss = classification_loss + box_loss
+
         
         total_loss = classification_loss
 
