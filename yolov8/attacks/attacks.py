@@ -604,10 +604,9 @@ def optimize_patch(
 
 
 
-
 def fgsm_attack_detector(
     image_path: str,
-    model_path: str = 'yolov8n.pt',
+    model: YOLO,
     epsilon: float = 0.05,
     conf_threshold: float = 0.5,
     device: str = 'cpu'
@@ -620,7 +619,7 @@ def fgsm_attack_detector(
 
     Args:
         image_path (str): Path to the input image file (JPG/PNG)
-        model_path (str): Path to YOLOv8 detection model weights (default: 'yolov8n.pt')
+        model (YOLO): Initialized YOLOv8 detection model
         epsilon (float): Magnitude of perturbation (controls attack strength, typically 0.01-0.1)
         conf_threshold (float): Minimum confidence score to consider detections (0.0-1.0)
         device (str): Computation device ('cpu' or 'cuda')
@@ -634,8 +633,8 @@ def fgsm_attack_detector(
     """
     
     # 1. Model and Image Preparation ===========================================
-    # Load YOLOv8 detection model and move to target device
-    model = YOLO(model_path).to(device)
+    # Move model to target device
+    model = model.to(device)
     
     # Preprocess image (normalization, resizing) and enable gradient tracking
     # preprocess_image() should return tensor of shape [1, 3, H, W] in [0,1] range
@@ -712,7 +711,6 @@ def fgsm_attack_detector(
     perturbed_image = torch.clamp(perturbed_image, 0, 1).detach()
 
     return perturbed_image
-
 
 
 import torch
