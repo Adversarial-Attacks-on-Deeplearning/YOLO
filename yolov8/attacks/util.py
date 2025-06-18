@@ -212,16 +212,6 @@ def compare_original_and_adversarial(model, image_path, adversarial_image, conf_
     else:
         print("Could not render one or both prediction images.")
 
-import os
-import numpy as np
-import torch
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from torchvision.utils import save_image
-from PIL import Image
-import torchvision.transforms as transforms
-
-
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -232,9 +222,8 @@ from PIL import Image
 def compare_original_and_adversarial_png(model, image_path, adversarial_image, conf_threshold):
     """
     Compares original and adversarial images by showing:
-      - Raw images
-      - Model predictions
-      - Pixel-wise difference image
+      - Model predictions on original and adversarial images
+      - Pixel-wise difference image (no predictions)
 
     Args:
         model: YOLO model to run predictions.
@@ -265,30 +254,10 @@ def compare_original_and_adversarial_png(model, image_path, adversarial_image, c
     original_np = (original_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
     adversarial_np = (loaded_adv_tensor.squeeze().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 
-    # --- Compute and visualize the difference ---
-    # Difference (absolute), then scale for visibility
+    # Compute pixel-wise difference image
     difference_np = np.abs(original_np.astype(np.int16) - adversarial_np.astype(np.int16)).astype(np.uint8)
 
-    # Display raw images and difference
-    plt.figure(figsize=(15, 5))
-    plt.subplot(1, 3, 1)
-    plt.imshow(original_np)
-    plt.axis('off')
-    plt.title("Original Image")
-
-    plt.subplot(1, 3, 2)
-    plt.imshow(adversarial_np)
-    plt.axis('off')
-    plt.title("Adversarial Image (PNG)")
-
-    plt.subplot(1, 3, 3)
-    plt.imshow(difference_np)
-    plt.axis('off')
-    plt.title("Difference Image (|Adv - Orig|)")
-    plt.tight_layout()
-    plt.show()
-
-    # Display prediction results
+    # Render prediction images
     try:
         original_pred_img = original_results[0].plot()
     except Exception as e:
@@ -301,21 +270,28 @@ def compare_original_and_adversarial_png(model, image_path, adversarial_image, c
         print("Error rendering adversarial predictions:", e)
         adversarial_pred_img = None
 
-    if original_pred_img is not None and adversarial_pred_img is not None:
-        plt.figure(figsize=(10, 5))
-        plt.subplot(1, 2, 1)
+    # --- Display all side by side ---
+    plt.figure(figsize=(18, 6))
+
+    if original_pred_img is not None:
+        plt.subplot(1, 3, 1)
         plt.imshow(original_pred_img)
         plt.axis('off')
         plt.title("Original Prediction")
 
-        plt.subplot(1, 2, 2)
+    if adversarial_pred_img is not None:
+        plt.subplot(1, 3, 2)
         plt.imshow(adversarial_pred_img)
         plt.axis('off')
         plt.title("Adversarial Prediction")
-        plt.tight_layout()
-        plt.show()
-    else:
-        print("Could not render one or both prediction images.")
+
+    plt.subplot(1, 3, 3)
+    plt.imshow(difference_np)
+    plt.axis('off')
+    plt.title("Difference Image")
+
+    plt.tight_layout()
+    plt.show()
 
 
 
