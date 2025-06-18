@@ -814,6 +814,15 @@ def train_universal_attack(
     print("Training complete.")
     return delta, epoch_losses
 
+import torch
+from ultralytics import YOLO
+from util import preprocess_image  # custom function
+import torch.nn.functional as F
+import os
+import numpy as np
+from typing import Optional
+from PIL import Image
+from torchvision import transforms
 
 def pgd_attack_detector(
     image_path: str,
@@ -850,8 +859,9 @@ def pgd_attack_detector(
     """
     
     # 1. Model and Image Preparation ===========================================
-    # Move model to target device
+    # Move model to target device and ensure training mode for gradient computation
     model = model.to(device)
+    model.model.train()  # Explicitly set to training mode to enable gradients
     
     # Preprocess image (normalization, resizing) and enable gradient tracking
     # preprocess_image() should return tensor of shape [1, 3, H, W] in [0,1] range
@@ -873,8 +883,9 @@ def pgd_attack_detector(
         adv_image.requires_grad_(True)
         
         # 3. Raw Model Output Extraction ======================================
-        # Bypass post-processing to access raw predictions
-        raw_outputs = model.model(adv_image)
+        # Run model in training mode to get raw predictions
+        with torch.enable_grad():  # Ensure gradients are enabled
+            raw_outputs = model.model(adv_image)
         
         # Verify output dimensions
         if raw_outputs[0].shape[-1] < 5:
@@ -916,7 +927,10 @@ def pgd_attack_detector(
             target_classes
         )
 
-
+        # Optional: Add bounding box regression loss
+        # target_boxes = box_coords[mask].detach()
+        # box_loss = torch.nn.functional.smooth_l1_loss(box_coords[mask], target_boxes)
+        # total_loss = classification_loss + box_loss
         
         total_loss = classification_loss
 
@@ -940,8 +954,6 @@ def pgd_attack_detector(
 
     # 12. Return Final Adversarial Image ======================================
     return adv_image
-
-
 
 
 def square_attack_detector(
